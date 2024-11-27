@@ -39,7 +39,7 @@ func ParseNetworkBase(details *networkLoggingTypes.NetworkBase) (*networkLogging
 
 	ecsUrl := &ecs.Url{
 		Domain:    hostname,
-		Extension: filepath.Ext(parsedUrl.Path),
+		Extension: strings.TrimPrefix(filepath.Ext(parsedUrl.Path), "."),
 		Fragment:  parsedUrl.Fragment,
 		Original:  details.Url,
 		Full:      details.Url,
@@ -132,7 +132,7 @@ func ParseNetworkRequest(
 		return nil, fmt.Errorf("failed to obtain network base data: %w", err)
 	}
 
-	parsedTimestamp := time.Unix(networkRequest.TimeStamp, 0).Format(time.RFC3339)
+	parsedTimestamp := time.UnixMilli(networkRequest.TimeStamp).Format(time.RFC3339)
 	base.Timestamp = parsedTimestamp
 
 	ecsEvent := base.Event
