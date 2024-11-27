@@ -9,6 +9,7 @@ import (
 	networkLoggingTypes "github.com/vphpersson/web_request_logging/pkg/types"
 	"net"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,7 +18,7 @@ import (
 
 var httpVersionPattern = regexp.MustCompile(`^HTTP/([^ ]+) \d+( (.+))?$`)
 
-func ParseNetworkBase(details *networkLoggingTypes.NetworkBase) (*ecs.Base, error) {
+func ParseNetworkBase(details *networkLoggingTypes.NetworkBase) (*networkLoggingTypes.EcsWebRequestLoggingBase, error) {
 	if details == nil {
 		return nil, nil
 	}
@@ -37,15 +38,16 @@ func ParseNetworkBase(details *networkLoggingTypes.NetworkBase) (*ecs.Base, erro
 	}
 
 	ecsUrl := &ecs.Url{
-		Domain:   hostname,
-		Fragment: parsedUrl.Fragment,
-		Original: details.Url,
-		Full:     details.Url,
-		Password: password,
-		Path:     parsedUrl.Path,
-		Query:    parsedUrl.RawQuery,
-		Scheme:   parsedUrl.Scheme,
-		Username: username,
+		Domain:    hostname,
+		Extension: filepath.Ext(parsedUrl.Path),
+		Fragment:  parsedUrl.Fragment,
+		Original:  details.Url,
+		Full:      details.Url,
+		Password:  password,
+		Path:      parsedUrl.Path,
+		Query:     parsedUrl.RawQuery,
+		Scheme:    parsedUrl.Scheme,
+		Username:  username,
 	}
 
 	var port int
@@ -85,31 +87,39 @@ func ParseNetworkBase(details *networkLoggingTypes.NetworkBase) (*ecs.Base, erro
 		}
 	}
 
-	base := &ecs.Base{
-		Event: &ecs.Event{
-			Kind:     "event",
-			Category: []string{"network", "web"},
-			Type:     []string{"connection"},
-		},
-		Http: &ecs.Http{
-			Request: &ecs.HttpRequest{
-				Id:       details.RequestId,
-				Method:   details.Method,
-				Referrer: details.OriginUrl,
+	base := &networkLoggingTypes.EcsWebRequestLoggingBase{
+		Base: ecs.Base{
+			Event: &ecs.Event{
+				Kind:     "event",
+				Category: []string{"network", "web"},
+				Type:     []string{"connection"},
 			},
+			Http: &ecs.Http{
+				Request: &ecs.HttpRequest{
+					Id:       details.RequestId,
+					Method:   details.Method,
+					Referrer: details.OriginUrl,
+				},
+			},
+			Network: &ecs.Network{
+				Application: "firefox",
+				Protocol:    "http",
+			},
+			Server: ecsServer,
+			Url:    ecsUrl,
 		},
-		Network: &ecs.Network{
-			Application: "firefox",
-			Protocol:    "http",
+		WebRequestLogging: &networkLoggingTypes.EcsWebRequestLogging{
+			TabId: details.TabId,
+			Type:  details.Type,
 		},
-		Server: ecsServer,
-		Url:    ecsUrl,
 	}
 
 	return base, nil
 }
 
-func ParseNetworkRequest(networkRequest *networkLoggingTypes.NetworkRequest) (*ecs.Base, error) {
+func ParseNetworkRequest(
+	networkRequest *networkLoggingTypes.NetworkRequest,
+) (*networkLoggingTypes.EcsWebRequestLoggingBase, error) {
 	if networkRequest == nil {
 		return nil, nil
 	}
@@ -144,23 +154,26 @@ func ParseNetworkRequest(networkRequest *networkLoggingTypes.NetworkRequest) (*e
 
 	var headerStrings []string
 	for _, header := range networkRequest.RequestHeaders {
-		headerStrings = append(headerStrings, fmt.Sprintf("%s: %s", header.Name, header.Value))
+		headerStrings = append(headerStrings, fmt.Sprintf("%s: %s\r\n", header.Name, header.Value))
 	}
 	if len(headerStrings) != 0 {
 		ecsHttpRequest.HttpHeaders = &ecs.HttpHeaders{
-			Normalized: strings.Join(headerStrings, "\r\n"),
+			Normalized: strings.Join(headerStrings, ""),
 		}
 	}
 
 	return base, nil
 }
 
-func ParseNetworkResponse(networkResponse *networkLoggingTypes.NetworkResponse, baseString string) (*ecs.Base, error) {
+func ParseNetworkResponse(
+	networkResponse *networkLoggingTypes.NetworkResponse,
+	baseString string,
+) (*networkLoggingTypes.EcsWebRequestLoggingBase, error) {
 	if networkResponse == nil {
 		return nil, nil
 	}
 
-	var base *ecs.Base
+	var base *networkLoggingTypes.EcsWebRequestLoggingBase
 
 	if baseString == "" {
 		var err error
@@ -184,8 +197,13 @@ func ParseNetworkResponse(networkResponse *networkLoggingTypes.NetworkResponse, 
 	if ecsEvent == nil {
 		return nil, networkLoggingErrors.ErrNilEcsEvent
 	}
-
 	ecsEvent.End = parsedTimestamp
+
+	ecsWebRequestLogging := base.WebRequestLogging
+	if ecsWebRequestLogging == nil {
+		return nil, networkLoggingErrors.ErrNilWebRequestLogging
+	}
+	ecsWebRequestLogging.FromCache = &networkResponse.FromCache
 
 	ecsHttp := base.Http
 	if ecsHttp == nil {
@@ -216,11 +234,17 @@ func ParseNetworkResponse(networkResponse *networkLoggingTypes.NetworkResponse, 
 		ecsNetwork.IanaNumber = "6"
 	}
 
+	ecsServer := base.Server
+	if ecsServer == nil {
+		return nil, networkLoggingErrors.ErrNilEcsServer
+	}
+	ecsServer.Ip = networkResponse.Ip
+
 	ecsHttpResponse := &ecs.HttpResponse{StatusCode: networkResponse.StatusCode, ReasonPhrase: reasonPhrase}
 
 	var headerStrings []string
 	for _, header := range networkResponse.ResponseHeaders {
-		headerStrings = append(headerStrings, fmt.Sprintf("%s: %s", header.Name, header.Value))
+		headerStrings = append(headerStrings, fmt.Sprintf("%s: %s\r\n", header.Name, header.Value))
 
 		if strings.ToLower(header.Name) == "content-type" {
 			ecsHttpResponse.ContentType = header.Value
@@ -228,7 +252,7 @@ func ParseNetworkResponse(networkResponse *networkLoggingTypes.NetworkResponse, 
 	}
 	if len(headerStrings) != 0 {
 		ecsHttpResponse.HttpHeaders = &ecs.HttpHeaders{
-			Normalized: strings.Join(headerStrings, "\r\n"),
+			Normalized: strings.Join(headerStrings, ""),
 		}
 	}
 

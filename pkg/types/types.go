@@ -1,5 +1,7 @@
 package types
 
+import "github.com/Motmedel/ecs_go/ecs"
+
 type Header struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
@@ -33,7 +35,7 @@ type NetworkRequest struct {
 
 type NetworkResponse struct {
 	NetworkBase
-	IP              string    `json:"ip"`
+	Ip              string    `json:"ip"`
 	StatusCode      int       `json:"statusCode,omitempty"`
 	StatusLine      string    `json:"statusLine,omitempty"`
 	FromCache       bool      `json:"fromCache,omitempty"`
@@ -47,4 +49,15 @@ type ProxyInfo struct {
 type UrlClassification struct {
 	FirstParty []string `json:"firstParty"`
 	ThirdParty []string `json:"thirdParty"`
+}
+
+type EcsWebRequestLogging struct {
+	FromCache *bool  `json:"from_cache,omitempty"`
+	TabId     int    `json:"tab_id,omitempty"`
+	Type      string `json:"type,omitempty"`
+}
+
+type EcsWebRequestLoggingBase struct {
+	ecs.Base
+	WebRequestLogging *EcsWebRequestLogging `json:"web_request_logging,omitempty"`
 }
