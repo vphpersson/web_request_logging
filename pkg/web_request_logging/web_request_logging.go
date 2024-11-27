@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-var httpVersionPattern = regexp.MustCompile(`^HTTP/([^ ]+) \d+( (.+))?$`)
+var httpVersionPattern = regexp.MustCompile(`^HTTP/([^ ]+) \d+(\s+(.*))?$`)
 
 func ParseNetworkBase(details *networkLoggingTypes.NetworkBase) (*networkLoggingTypes.EcsWebRequestLoggingBase, error) {
 	if details == nil {
