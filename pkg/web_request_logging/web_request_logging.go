@@ -190,7 +190,7 @@ func ParseNetworkResponse(
 		}
 	}
 
-	parsedTimestamp := time.Unix(networkResponse.TimeStamp, 0).Format(time.RFC3339)
+	parsedTimestamp := time.UnixMilli(networkResponse.TimeStamp).Format(time.RFC3339)
 	base.Timestamp = parsedTimestamp
 
 	ecsEvent := base.Event
