@@ -1,7 +1,6 @@
 package web_request_logging
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/Motmedel/ecs_go/ecs"
 	"github.com/Motmedel/utils_go/pkg/net/domain_breakdown"
@@ -167,15 +166,13 @@ func ParseNetworkRequest(
 
 func ParseNetworkResponse(
 	networkResponse *networkLoggingTypes.NetworkResponse,
-	baseString string,
+	base *networkLoggingTypes.EcsWebRequestLoggingBase,
 ) (*networkLoggingTypes.EcsWebRequestLoggingBase, error) {
 	if networkResponse == nil {
 		return nil, nil
 	}
 
-	var base *networkLoggingTypes.EcsWebRequestLoggingBase
-
-	if baseString == "" {
+	if base == nil {
 		var err error
 		base, err = ParseNetworkBase(&networkResponse.NetworkBase)
 		if err != nil {
@@ -183,10 +180,6 @@ func ParseNetworkResponse(
 		}
 		if base == nil {
 			return nil, fmt.Errorf("failed to obtain network basa data: %w", networkLoggingErrors.ErrNilEcsBase)
-		}
-	} else {
-		if err := json.Unmarshal([]byte(baseString), &base); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal a network request base string: %w", err)
 		}
 	}
 
