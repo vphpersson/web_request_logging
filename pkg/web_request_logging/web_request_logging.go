@@ -218,11 +218,10 @@ func ParseNetworkResponse(
 	}
 
 	ecsHttp.Version = httpVersion
-	switch httpVersion {
-	case "3":
+	if strings.HasPrefix(ecsHttp.Version, "3.") {
 		ecsNetwork.Transport = "udp"
 		ecsNetwork.IanaNumber = "17"
-	default:
+	} else {
 		ecsNetwork.Transport = "tcp"
 		ecsNetwork.IanaNumber = "6"
 	}
