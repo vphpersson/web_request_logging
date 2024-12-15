@@ -255,7 +255,7 @@ func EnrichWithNetworkResponse(
 	}
 
 	ecsHttpResponse := ecsHttp.Response
-	if ecsHttpResponse != nil {
+	if ecsHttpResponse == nil {
 		ecsHttpResponse = &ecs.HttpResponse{}
 		ecsHttp.Response = ecsHttpResponse
 	}
