@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/Motmedel/ecs_go/ecs"
 	"github.com/Motmedel/utils_go/pkg/net/domain_breakdown"
-	networkLoggingErrors "github.com/vphpersson/web_request_logging/pkg/errors"
 	networkLoggingTypes "github.com/vphpersson/web_request_logging/pkg/types"
 	"net"
 	"net/url"
@@ -17,14 +16,51 @@ import (
 
 var httpVersionPattern = regexp.MustCompile(`^HTTP/([^ ]+) \d+(\s+(.*))?$`)
 
-func ParseNetworkBase(details *networkLoggingTypes.NetworkBase) (*networkLoggingTypes.EcsWebRequestLoggingBase, error) {
-	if details == nil {
-		return nil, nil
+func EnrichWithNetworkBase(
+	base *networkLoggingTypes.EcsWebRequestLoggingBase,
+	networkBase *networkLoggingTypes.NetworkBase,
+) {
+	if base == nil {
+		return
 	}
 
-	parsedUrl, err := url.Parse(details.Url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse url: %w", err)
+	if networkBase == nil {
+		return
+	}
+
+	ecsNetwork := base.Network
+	if ecsNetwork == nil {
+		ecsNetwork = &ecs.Network{}
+		base.Network = ecsNetwork
+	}
+	ecsNetwork.Application = "firefox"
+	ecsNetwork.Protocol = "http"
+
+	ecsHttp := base.Http
+	if ecsHttp == nil {
+		ecsHttp = &ecs.Http{}
+		base.Http = ecsHttp
+	}
+	ecsHttpRequest := ecsHttp.Request
+	if ecsHttpRequest == nil {
+		ecsHttpRequest = &ecs.HttpRequest{}
+		ecsHttp.Request = ecsHttpRequest
+	}
+	ecsHttpRequest.Id = networkBase.RequestId
+	ecsHttpRequest.Method = networkBase.Method
+	ecsHttpRequest.Referrer = networkBase.OriginUrl
+
+	ecsWebRequestLogging := base.WebRequestLogging
+	if ecsWebRequestLogging == nil {
+		ecsWebRequestLogging = &networkLoggingTypes.EcsWebRequestLogging{}
+		base.WebRequestLogging = ecsWebRequestLogging
+	}
+	ecsWebRequestLogging.TabId = networkBase.TabId
+	ecsWebRequestLogging.Type = networkBase.Type
+
+	parsedUrl, _ := url.Parse(networkBase.Url)
+	if parsedUrl == nil {
+		return
 	}
 
 	hostname := parsedUrl.Hostname()
@@ -36,27 +72,30 @@ func ParseNetworkBase(details *networkLoggingTypes.NetworkBase) (*networkLogging
 		password, _ = userInfo.Password()
 	}
 
-	ecsUrl := &ecs.Url{
-		Domain:    hostname,
-		Extension: strings.TrimPrefix(filepath.Ext(parsedUrl.Path), "."),
-		Fragment:  parsedUrl.Fragment,
-		Original:  details.Url,
-		Full:      details.Url,
-		Password:  password,
-		Path:      parsedUrl.Path,
-		Query:     parsedUrl.RawQuery,
-		Scheme:    parsedUrl.Scheme,
-		Username:  username,
+	ecsUrl := base.Url
+	if ecsUrl == nil {
+		ecsUrl = &ecs.Url{}
+		base.Url = ecsUrl
 	}
+
+	ecsUrl.Domain = hostname
+	ecsUrl.Extension = strings.TrimPrefix(filepath.Ext(parsedUrl.Path), ".")
+	ecsUrl.Fragment = parsedUrl.Fragment
+	ecsUrl.Original = networkBase.Url
+	ecsUrl.Full = networkBase.Url
+	ecsUrl.Password = password
+	ecsUrl.Path = parsedUrl.Path
+	ecsUrl.Query = parsedUrl.RawQuery
+	ecsUrl.Scheme = parsedUrl.Scheme
+	ecsUrl.Username = username
 
 	var port int
 	if parsedUrlPort := parsedUrl.Port(); parsedUrlPort != "" {
+		var err error
 		port, err = strconv.Atoi(parsedUrlPort)
 		if err != nil {
-			return nil, fmt.Errorf("failed to part url port: %w", err)
+			ecsUrl.Port = port
 		}
-
-		ecsUrl.Port = port
 	} else {
 		switch parsedUrl.Scheme {
 		case "http":
@@ -66,7 +105,13 @@ func ParseNetworkBase(details *networkLoggingTypes.NetworkBase) (*networkLogging
 		}
 	}
 
-	ecsServer := &ecs.Target{Address: hostname, Port: port}
+	ecsServer := base.Server
+	if ecsServer == nil {
+		ecsServer = &ecs.Target{}
+		base.Server = ecsServer
+	}
+	ecsServer.Address = hostname
+	ecsServer.Port = port
 
 	requestUrlBreakdown := domain_breakdown.GetDomainBreakdown(hostname)
 	if requestUrlBreakdown != nil {
@@ -85,75 +130,59 @@ func ParseNetworkBase(details *networkLoggingTypes.NetworkBase) (*networkLogging
 			ecsServer.Ip = parsedIp.String()
 		}
 	}
-
-	base := &networkLoggingTypes.EcsWebRequestLoggingBase{
-		Base: ecs.Base{
-			Event: &ecs.Event{
-				Kind:     "event",
-				Category: []string{"network", "web"},
-				Type:     []string{"connection"},
-			},
-			Http: &ecs.Http{
-				Request: &ecs.HttpRequest{
-					Id:       details.RequestId,
-					Method:   details.Method,
-					Referrer: details.OriginUrl,
-				},
-			},
-			Network: &ecs.Network{
-				Application: "firefox",
-				Protocol:    "http",
-			},
-			Server: ecsServer,
-			Url:    ecsUrl,
-		},
-		WebRequestLogging: &networkLoggingTypes.EcsWebRequestLogging{
-			TabId: details.TabId,
-			Type:  details.Type,
-		},
-	}
-
-	return base, nil
 }
 
-func ParseNetworkRequest(
+func EnrichWithNetworkRequest(
+	base *networkLoggingTypes.EcsWebRequestLoggingBase,
 	networkRequest *networkLoggingTypes.NetworkRequest,
-) (*networkLoggingTypes.EcsWebRequestLoggingBase, error) {
-	if networkRequest == nil {
-		return nil, nil
-	}
-
-	base, err := ParseNetworkBase(&networkRequest.NetworkBase)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract network base data: %w", err)
-	}
+) {
 	if base == nil {
-		return nil, fmt.Errorf("failed to obtain network base data: %w", err)
+		return
 	}
 
-	parsedTimestamp := time.UnixMilli(networkRequest.TimeStamp).Format(time.RFC3339)
+	if networkRequest == nil {
+		return
+	}
+
+	parsedTimestamp := time.UnixMilli(networkRequest.TimeStamp).UTC().Format("2006-01-02T15:04:05.999Z")
 	base.Timestamp = parsedTimestamp
 
 	ecsEvent := base.Event
 	if ecsEvent == nil {
-		return nil, networkLoggingErrors.ErrNilEcsEvent
+		ecsEvent = &ecs.Event{}
+		base.Event = ecsEvent
 	}
-
 	base.Event.Start = parsedTimestamp
 
 	ecsHttp := base.Http
 	if ecsHttp == nil {
-		return nil, networkLoggingErrors.ErrNilEcsHttp
+		ecsHttp = &ecs.Http{}
+		base.Http = ecsHttp
 	}
-
 	ecsHttpRequest := ecsHttp.Request
 	if ecsHttpRequest == nil {
-		return nil, networkLoggingErrors.ErrNilEcsHttpRequest
+		ecsHttpRequest = &ecs.HttpRequest{}
+		ecsHttp.Request = ecsHttpRequest
 	}
 
 	var headerStrings []string
 	for _, header := range networkRequest.RequestHeaders {
-		headerStrings = append(headerStrings, fmt.Sprintf("%s: %s\r\n", header.Name, header.Value))
+		headerName := header.Name
+		headerValue := header.Value
+
+		switch strings.ToLower(headerName) {
+		case "content-type":
+			ecsHttpRequest.ContentType = headerValue
+		case "set-cookie":
+			fallthrough
+		case "cookie":
+			fallthrough
+		case "authorization":
+			// Mask potentially sensitive value.
+			headerValue = "(MASKED)"
+		}
+
+		headerStrings = append(headerStrings, fmt.Sprintf("%s: %s\r\n", headerName, headerValue))
 	}
 	if len(headerStrings) != 0 {
 		ecsHttpRequest.HttpHeaders = &ecs.HttpHeaders{
@@ -161,46 +190,44 @@ func ParseNetworkRequest(
 		}
 	}
 
-	return base, nil
+	EnrichWithNetworkBase(base, &networkRequest.NetworkBase)
 }
 
-func ParseNetworkResponse(
-	networkResponse *networkLoggingTypes.NetworkResponse,
+func EnrichWithNetworkResponse(
 	base *networkLoggingTypes.EcsWebRequestLoggingBase,
-) (*networkLoggingTypes.EcsWebRequestLoggingBase, error) {
-	if networkResponse == nil {
-		return nil, nil
-	}
-
+	networkResponse *networkLoggingTypes.NetworkResponse,
+) {
 	if base == nil {
-		var err error
-		base, err = ParseNetworkBase(&networkResponse.NetworkBase)
-		if err != nil {
-			return nil, fmt.Errorf("failed to extract network base data: %w", err)
-		}
-		if base == nil {
-			return nil, fmt.Errorf("failed to obtain network basa data: %w", networkLoggingErrors.ErrNilEcsBase)
-		}
+		return
 	}
 
-	parsedTimestamp := time.UnixMilli(networkResponse.TimeStamp).Format(time.RFC3339)
+	if networkResponse == nil {
+		return
+	}
+
+	parsedTimestamp := time.UnixMilli(networkResponse.TimeStamp).UTC().Format("2006-01-02T15:04:05.999Z")
 	base.Timestamp = parsedTimestamp
 
 	ecsEvent := base.Event
 	if ecsEvent == nil {
-		return nil, networkLoggingErrors.ErrNilEcsEvent
+		ecsEvent = &ecs.Event{}
+		base.Event = ecsEvent
 	}
 	ecsEvent.End = parsedTimestamp
 
-	ecsWebRequestLogging := base.WebRequestLogging
-	if ecsWebRequestLogging == nil {
-		return nil, networkLoggingErrors.ErrNilWebRequestLogging
+	ecsServer := base.Server
+	if ecsServer == nil {
+		ecsServer = &ecs.Target{}
+		base.Server = ecsServer
 	}
-	ecsWebRequestLogging.FromCache = &networkResponse.FromCache
+	if networkResponseIp := net.ParseIP(networkResponse.Ip); networkResponseIp != nil {
+		ecsServer.Ip = networkResponseIp.String()
+	}
 
 	ecsHttp := base.Http
 	if ecsHttp == nil {
-		return nil, networkLoggingErrors.ErrNilEcsHttp
+		ecsHttp = &ecs.Http{}
+		base.Http = ecsHttp
 	}
 
 	var httpVersion string
@@ -208,39 +235,51 @@ func ParseNetworkResponse(
 	if matches := httpVersionPattern.FindStringSubmatch(networkResponse.StatusLine); matches != nil && len(matches) > 1 {
 		httpVersion = matches[1]
 		reasonPhrase = matches[3]
-	} else {
-		return nil, networkLoggingErrors.ErrUnmatchedHttpVersion
 	}
 
-	ecsNetwork := base.Network
-	if ecsNetwork == nil {
-		return nil, networkLoggingErrors.ErrNilEcsNetwork
+	if httpVersion != "" {
+		ecsHttp.Version = httpVersion
+
+		ecsNetwork := base.Network
+		if ecsNetwork == nil {
+			ecsNetwork = &ecs.Network{}
+			base.Network = ecsNetwork
+		}
+		if strings.HasPrefix(httpVersion, "3.") {
+			ecsNetwork.Transport = "udp"
+			ecsNetwork.IanaNumber = "17"
+		} else {
+			ecsNetwork.Transport = "tcp"
+			ecsNetwork.IanaNumber = "6"
+		}
 	}
 
-	ecsHttp.Version = httpVersion
-	if strings.HasPrefix(ecsHttp.Version, "3.") {
-		ecsNetwork.Transport = "udp"
-		ecsNetwork.IanaNumber = "17"
-	} else {
-		ecsNetwork.Transport = "tcp"
-		ecsNetwork.IanaNumber = "6"
+	ecsHttpResponse := ecsHttp.Response
+	if ecsHttpResponse != nil {
+		ecsHttpResponse = &ecs.HttpResponse{}
+		ecsHttp.Response = ecsHttpResponse
 	}
-
-	ecsServer := base.Server
-	if ecsServer == nil {
-		return nil, networkLoggingErrors.ErrNilEcsServer
-	}
-	ecsServer.Ip = networkResponse.Ip
-
-	ecsHttpResponse := &ecs.HttpResponse{StatusCode: networkResponse.StatusCode, ReasonPhrase: reasonPhrase}
+	ecsHttpResponse.StatusCode = networkResponse.StatusCode
+	ecsHttpResponse.ReasonPhrase = reasonPhrase
 
 	var headerStrings []string
 	for _, header := range networkResponse.ResponseHeaders {
-		headerStrings = append(headerStrings, fmt.Sprintf("%s: %s\r\n", header.Name, header.Value))
+		headerName := header.Name
+		headerValue := header.Value
 
-		if strings.ToLower(header.Name) == "content-type" {
-			ecsHttpResponse.ContentType = header.Value
+		switch strings.ToLower(headerName) {
+		case "content-type":
+			ecsHttpResponse.ContentType = headerValue
+		case "set-cookie":
+			fallthrough
+		case "cookie":
+			fallthrough
+		case "authorization":
+			// Mask potentially sensitive value.
+			headerValue = "(MASKED)"
 		}
+
+		headerStrings = append(headerStrings, fmt.Sprintf("%s: %s\r\n", headerName, headerValue))
 	}
 	if len(headerStrings) != 0 {
 		ecsHttpResponse.HttpHeaders = &ecs.HttpHeaders{
@@ -248,7 +287,10 @@ func ParseNetworkResponse(
 		}
 	}
 
-	ecsHttp.Response = ecsHttpResponse
-
-	return base, nil
+	ecsWebRequestLogging := base.WebRequestLogging
+	if ecsWebRequestLogging == nil {
+		ecsWebRequestLogging = &networkLoggingTypes.EcsWebRequestLogging{}
+		base.WebRequestLogging = ecsWebRequestLogging
+	}
+	ecsWebRequestLogging.FromCache = &networkResponse.FromCache
 }
